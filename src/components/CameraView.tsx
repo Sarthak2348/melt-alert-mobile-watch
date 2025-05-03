@@ -1,9 +1,9 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Camera, Cog, FilmIcon, PauseIcon, PlayIcon, Timer } from 'lucide-react';
 import { NotificationService } from '@/services/NotificationService';
 import { MeltDetectionService } from '@/services/MeltDetectionService';
+import { CameraService } from '@/services/CameraService';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 
@@ -58,6 +58,9 @@ const CameraView: React.FC<CameraViewProps> = ({
   
   const setupCamera = async () => {
     try {
+      // First request permissions using Capacitor's API
+      await CameraService.requestPermissions();
+      
       const constraints = { 
         video: { 
           facingMode: 'environment',
@@ -85,7 +88,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       console.error('Error accessing camera:', err);
       toast({
         title: "Camera error",
-        description: "Could not access the camera",
+        description: "Could not access the camera. Please check your camera permissions.",
         variant: "destructive"
       });
     }
@@ -166,12 +169,41 @@ const CameraView: React.FC<CameraViewProps> = ({
           setDetectionData(result.detectionData);
           
           // Show enhanced image if requested
-          if (showEnhanced && enhancedCanvasRef.current && result.detectionData) {
+          if (showEnhanced && enhancedCanvasRef.current) {
             const ctx = enhancedCanvasRef.current.getContext('2d');
             if (ctx) {
+              // Resize canvas to match input
               enhancedCanvasRef.current.width = canvas.width;
               enhancedCanvasRef.current.height = canvas.height;
+              
+              // Draw enhanced image
               ctx.drawImage(canvas, 0, 0);
+              
+              // Draw frame difference overlay if available
+              if (result.detectionData && result.detectionData.diffImageData) {
+                // Create a new ImageData object from the diff data
+                const diffImage = new ImageData(
+                  result.detectionData.diffImageData,
+                  canvas.width,
+                  canvas.height
+                );
+                
+                // Create a temporary canvas for the diff overlay
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                if (tempCtx) {
+                  // Draw the diff image to the temp canvas
+                  tempCtx.putImageData(diffImage, 0, 0);
+                  
+                  // Draw the temp canvas with transparency onto the enhanced view
+                  ctx.globalAlpha = 0.5;
+                  ctx.drawImage(tempCanvas, 0, 0);
+                  ctx.globalAlpha = 1.0;
+                }
+              }
               
               // Highlight detection areas
               if (result.confidence > 5) {
@@ -312,6 +344,9 @@ const CameraView: React.FC<CameraViewProps> = ({
           <p>Confidence: {detectionData.normalizedScore?.toFixed(2)}%</p>
           {detectionData.temporalChangeDetected && (
             <p className="text-yellow-300">Change Detected</p>
+          )}
+          {detectionData.motionDetected && (
+            <p className="text-green-300">Motion: {detectionData.motionArea?.toFixed(2)}%</p>
           )}
         </div>
       )}

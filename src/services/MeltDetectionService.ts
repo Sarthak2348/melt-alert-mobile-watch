@@ -1,4 +1,3 @@
-
 import { ImageEnhancementService } from './ImageEnhancementService';
 
 interface MeltDetectionResult {
@@ -28,6 +27,7 @@ interface DetectionSettings {
   }>;
   enhanceImage: boolean;   // Whether to apply image enhancement
   temporalSensitivity: number; // 0-1 sensitivity for changes over time
+  motionThreshold: number; // Threshold for motion detection
 }
 
 export class MeltDetectionService {
@@ -35,7 +35,9 @@ export class MeltDetectionService {
   private static isModelLoading = false;
   private static isInitialized = false;
   private static previousDetectionData: any = null;
+  private static previousFrame: ImageData | null = null;
   private static frameCounter = 0;
+  private static meltsDetectedCount = 0;
   
   // Default detection settings
   private static defaultSettings: DetectionSettings = {
@@ -72,7 +74,8 @@ export class MeltDetectionService {
       }
     ],
     enhanceImage: true,
-    temporalSensitivity: 0.3
+    temporalSensitivity: 0.3,
+    motionThreshold: 30 // Threshold for motion detection (0-255)
   };
 
   /**
@@ -154,6 +157,52 @@ export class MeltDetectionService {
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       const pixels = imageData.data;
       
+      // STEP 1: Motion Detection (inspired by OpenCV code)
+      let motionDetected = false;
+      let motionArea = 0;
+      let diffImage: Uint8ClampedArray | null = null;
+      
+      if (this.previousFrame) {
+        // Create difference image between frames
+        diffImage = new Uint8ClampedArray(pixels.length);
+        let changedPixels = 0;
+        
+        for (let i = 0; i < pixels.length; i += 4) {
+          // Calculate absolute difference for each channel
+          const rDiff = Math.abs(pixels[i] - this.previousFrame.data[i]);
+          const gDiff = Math.abs(pixels[i + 1] - this.previousFrame.data[i + 1]);
+          const bDiff = Math.abs(pixels[i + 2] - this.previousFrame.data[i + 2]);
+          
+          // Average difference across channels
+          const diff = (rDiff + gDiff + bDiff) / 3;
+          
+          // Apply threshold to identify significant changes
+          const significant = diff > settings.motionThreshold;
+          
+          // Store binary difference result
+          diffImage[i] = diffImage[i + 1] = diffImage[i + 2] = significant ? 255 : 0;
+          diffImage[i + 3] = 255; // Alpha channel
+          
+          if (significant) {
+            changedPixels++;
+          }
+        }
+        
+        // Calculate the percentage of pixels that changed
+        motionArea = changedPixels / (pixels.length / 4) * 100;
+        
+        // Determine if motion is significant
+        motionDetected = motionArea > (1.0 * settings.sensitivity / 100);
+      }
+      
+      // Store current frame for next comparison
+      this.previousFrame = new ImageData(
+        new Uint8ClampedArray(pixels), 
+        canvas.width, 
+        canvas.height
+      );
+      
+      // STEP 2: Color Profile Analysis
       // Initialize profile detection counters
       const profileCounts: Record<string, number> = {};
       settings.colorProfiles.forEach(profile => {
@@ -199,10 +248,17 @@ export class MeltDetectionService {
       // Apply sensitivity threshold
       const adjustedThreshold = 5 * (settings.sensitivity / 50);
       
-      // Incorporate temporal change if previous data exists
+      // STEP 3: Combine color and motion detection
       let finalConfidence = Math.max(0, normalizedScore);
       let temporalChangeDetected = false;
       
+      if (motionDetected) {
+        // Boost confidence when motion is detected
+        finalConfidence += motionArea * 0.5;
+        temporalChangeDetected = true;
+      }
+      
+      // Also incorporate previous temporal changes if available
       if (this.previousDetectionData) {
         const previousConfidence = this.previousDetectionData.confidence;
         const confidenceChange = Math.abs(finalConfidence - previousConfidence);
@@ -215,7 +271,18 @@ export class MeltDetectionService {
       }
       
       // Determine if melting is detected
-      const isMelting = finalConfidence > adjustedThreshold || temporalChangeDetected;
+      const isMelting = finalConfidence > adjustedThreshold || 
+                       (temporalChangeDetected && finalConfidence > adjustedThreshold * 0.7);
+      
+      // Counter to avoid false positives
+      if (isMelting) {
+        this.meltsDetectedCount++;
+      } else {
+        this.meltsDetectedCount = Math.max(0, this.meltsDetectedCount - 1);
+      }
+      
+      // Only report a melt if we've seen it in multiple frames
+      const confirmedMelting = this.meltsDetectedCount >= 3;
       
       // Prepare detection data
       const detectionData = {
@@ -223,20 +290,23 @@ export class MeltDetectionService {
         totalAnalyzed: totalAnalyzedPixels,
         normalizedScore,
         temporalChangeDetected,
+        motionDetected,
+        motionArea,
         canvasWidth: canvas.width,
         canvasHeight: canvas.height,
-        timestamp: new Date().getTime()
+        timestamp: new Date().getTime(),
+        diffImageData: diffImage
       };
       
       // Store detection data for temporal analysis
       this.previousDetectionData = {
-        detected: isMelting,
+        detected: confirmedMelting,
         confidence: finalConfidence,
         detectionData
       };
       
       return {
-        detected: isMelting,
+        detected: confirmedMelting,
         confidence: finalConfidence,
         detectionData
       };
