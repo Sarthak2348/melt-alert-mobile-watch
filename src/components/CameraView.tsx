@@ -1,7 +1,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
-import { Camera, CameraCircle, Cog, FilmIcon, PauseIcon, PlayIcon } from 'lucide-react';
+import { Camera, Cog, FilmIcon, PauseIcon, PlayIcon } from 'lucide-react';
 import { NotificationService } from '@/services/NotificationService';
 import { MeltDetectionService } from '@/services/MeltDetectionService';
 import { cn } from '@/lib/utils';

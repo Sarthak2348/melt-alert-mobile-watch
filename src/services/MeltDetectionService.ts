@@ -1,6 +1,5 @@
 
 import * as tf from '@tensorflow/tfjs';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
 
 interface MeltDetectionResult {
   detected: boolean;
@@ -9,7 +8,7 @@ interface MeltDetectionResult {
 }
 
 export class MeltDetectionService {
-  private static model: cocoSsd.ObjectDetection | null = null;
+  private static model: any | null = null;
   private static isModelLoading = false;
   private static isInitialized = false;
   
@@ -94,9 +93,6 @@ export class MeltDetectionService {
         await tf.ready();
         
         // You could load a custom model here if you have one for melt detection
-        // This is just a placeholder using COCO-SSD as an example
-        // this.model = await cocoSsd.load();
-        
         this.isInitialized = true;
         this.isModelLoading = false;
       }
