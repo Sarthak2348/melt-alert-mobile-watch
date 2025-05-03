@@ -1,11 +1,13 @@
 
-import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { Camera, CameraResultType, CameraSource, CameraPermissionType, CameraDirection } from '@capacitor/camera';
 
 export interface PhotoOptions {
   quality?: number;
   width?: number;
   height?: number;
   allowEditing?: boolean;
+  saveToGallery?: boolean;
+  direction?: CameraDirection;
 }
 
 export class CameraService {
@@ -18,6 +20,8 @@ export class CameraService {
         source: CameraSource.Camera,
         width: 1920,
         height: 1080,
+        saveToGallery: false,
+        direction: CameraDirection.Rear,
         ...options
       };
 
@@ -31,10 +35,21 @@ export class CameraService {
 
   static async requestPermissions() {
     try {
-      const permissions = await Camera.requestPermissions();
+      const permissions = await Camera.requestPermissions({
+        permissions: [CameraPermissionType.Camera]
+      });
       return permissions;
     } catch (error) {
       console.error('Error requesting camera permissions:', error);
+      throw error;
+    }
+  }
+
+  static async checkPermissions() {
+    try {
+      return await Camera.checkPermissions();
+    } catch (error) {
+      console.error('Error checking camera permissions:', error);
       throw error;
     }
   }

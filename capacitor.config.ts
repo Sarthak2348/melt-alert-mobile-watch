@@ -17,7 +17,17 @@ const config: CapacitorConfig = {
     },
     Camera: {
       promptBeforeUse: true
+    },
+    SplashScreen: {
+      launchShowDuration: 2000,
+      backgroundColor: "#FFFFFF",
+      androidScaleType: "CENTER_CROP"
     }
+  },
+  android: {
+    allowMixedContent: true,
+    captureInput: true,
+    webContentsDebuggingEnabled: true
   }
 };
 
