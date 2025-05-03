@@ -1,5 +1,5 @@
 
-import { Camera, CameraResultType, CameraSource, CameraPermissionType, CameraDirection } from '@capacitor/camera';
+import { Camera, CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
 
 export interface PhotoOptions {
   quality?: number;
@@ -35,9 +35,8 @@ export class CameraService {
 
   static async requestPermissions() {
     try {
-      const permissions = await Camera.requestPermissions({
-        permissions: [CameraPermissionType.Camera]
-      });
+      // Updated to use proper permissions API
+      const permissions = await Camera.requestPermissions();
       return permissions;
     } catch (error) {
       console.error('Error requesting camera permissions:', error);
