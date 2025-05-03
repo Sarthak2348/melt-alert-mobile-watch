@@ -1,75 +1,244 @@
 
+import { ImageEnhancementService } from './ImageEnhancementService';
+
 interface MeltDetectionResult {
   detected: boolean;
   confidence: number;
   detectionData?: any;
 }
 
+interface DetectionSettings {
+  sensitivity: number;      // 0-100 sensitivity for detection
+  sampleInterval: number;   // Pixel sampling interval (higher = better performance)
+  regionOfInterest?: {      // Optional region to focus analysis
+    top: number;            // Top position (0-1)
+    left: number;           // Left position (0-1)
+    width: number;          // Width (0-1)
+    height: number;         // Height (0-1)
+  };
+  colorProfiles: Array<{   // Detection color profiles
+    name: string;
+    minR: number;
+    maxR: number;
+    minG: number;
+    maxG: number;
+    minB: number;
+    maxB: number;
+    weight: number;        // Importance weight for this profile
+  }>;
+  enhanceImage: boolean;   // Whether to apply image enhancement
+  temporalSensitivity: number; // 0-1 sensitivity for changes over time
+}
+
 export class MeltDetectionService {
   private static model: any | null = null;
   private static isModelLoading = false;
   private static isInitialized = false;
+  private static previousDetectionData: any = null;
+  private static frameCounter = 0;
   
-  // Simple threshold-based detection for demonstration
-  // This should be replaced with your actual melting detection algorithm
-  static async detectMelting(imageElement: HTMLImageElement | HTMLVideoElement): Promise<MeltDetectionResult> {
+  // Default detection settings
+  private static defaultSettings: DetectionSettings = {
+    sensitivity: 50,
+    sampleInterval: 20,
+    regionOfInterest: {
+      top: 0.25,
+      left: 0.25,
+      width: 0.5,
+      height: 0.5
+    },
+    colorProfiles: [
+      // Amber/yellow melting profile
+      {
+        name: "amber",
+        minR: 180,
+        maxR: 255,
+        minG: 130,
+        maxG: 220,
+        minB: 20,
+        maxB: 100,
+        weight: 1.0
+      },
+      // Beige/cream background profile (to filter out)
+      {
+        name: "beige",
+        minR: 190,
+        maxR: 255,
+        minG: 170,
+        maxG: 240,
+        minB: 140,
+        maxB: 220,
+        weight: -0.5 // Negative weight to reduce false positives
+      }
+    ],
+    enhanceImage: true,
+    temporalSensitivity: 0.3
+  };
+
+  /**
+   * Detects melting in the provided image or video element
+   * @param imageElement Source image/video element
+   * @param customSettings Optional custom detection settings 
+   * @returns Detection result with confidence scores
+   */
+  static async detectMelting(
+    imageElement: HTMLImageElement | HTMLVideoElement, 
+    customSettings?: Partial<DetectionSettings>
+  ): Promise<MeltDetectionResult> {
     try {
       // Initialize if not already done
       if (!this.isInitialized) {
         await this.initialize();
       }
       
-      // Create a canvas to analyze the image
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
+      // Merge default and custom settings
+      const settings: DetectionSettings = {
+        ...this.defaultSettings,
+        ...customSettings,
+        colorProfiles: customSettings?.colorProfiles || this.defaultSettings.colorProfiles,
+        regionOfInterest: customSettings?.regionOfInterest || this.defaultSettings.regionOfInterest
+      };
       
+      // Frame skipping for performance (process every Nth frame)
+      this.frameCounter++;
+      if (this.frameCounter % 3 !== 0) {
+        // Return previous result for skipped frames
+        if (this.previousDetectionData) {
+          return {
+            detected: this.previousDetectionData.detected,
+            confidence: this.previousDetectionData.confidence,
+            detectionData: { 
+              ...this.previousDetectionData.detectionData,
+              skippedFrame: true
+            }
+          };
+        }
+      }
+      this.frameCounter = 0;
+      
+      // Apply image enhancement if enabled
+      let canvas;
+      if (settings.enhanceImage) {
+        canvas = ImageEnhancementService.enhanceImage(imageElement);
+        
+        // Apply perspective correction/ROI if specified
+        if (settings.regionOfInterest) {
+          canvas = ImageEnhancementService.applyPerspectiveCorrection(
+            canvas, 
+            settings.regionOfInterest
+          );
+        }
+      } else {
+        // Create a canvas without enhancement
+        canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        
+        if (!context) {
+          throw new Error('Could not get canvas context');
+        }
+        
+        // Set canvas dimensions to match the image
+        canvas.width = imageElement.width || 300;
+        canvas.height = imageElement.height || 300;
+        
+        // Draw the image to the canvas
+        context.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
+      }
+      
+      const context = canvas.getContext('2d');
       if (!context) {
         throw new Error('Could not get canvas context');
       }
-      
-      // Set canvas dimensions to match the image
-      canvas.width = imageElement.width || 300;
-      canvas.height = imageElement.height || 300;
-      
-      // Draw the image to the canvas
-      context.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
       
       // Get image data for analysis
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       const pixels = imageData.data;
       
-      // Simple example: detect significant color changes that might indicate melting
-      // This is a placeholder algorithm - replace with your actual detection logic
-      let meltingPixelsCount = 0;
+      // Initialize profile detection counters
+      const profileCounts: Record<string, number> = {};
+      settings.colorProfiles.forEach(profile => {
+        profileCounts[profile.name] = 0;
+      });
       
-      // Check every 10th pixel for demonstration (for performance)
-      for (let i = 0; i < pixels.length; i += 40) {
+      // Adjust sampling interval based on sensitivity (higher sensitivity = more samples)
+      const adjustedSampleInterval = Math.max(1, Math.floor(settings.sampleInterval * (100 - settings.sensitivity) / 50));
+      
+      // Analyze pixels to detect melt patterns
+      let totalAnalyzedPixels = 0;
+      
+      for (let i = 0; i < pixels.length; i += adjustedSampleInterval * 4) {
         const r = pixels[i];
         const g = pixels[i + 1];
         const b = pixels[i + 2];
         
-        // Very simple example: look for amber/yellow-ish pixels that might indicate melting
-        // Replace with your actual algorithm logic
-        if (r > 200 && g > 150 && b < 100) {
-          meltingPixelsCount++;
+        totalAnalyzedPixels++;
+        
+        // Check against each color profile
+        settings.colorProfiles.forEach(profile => {
+          if (r >= profile.minR && r <= profile.maxR &&
+              g >= profile.minG && g <= profile.maxG &&
+              b >= profile.minB && b <= profile.maxB) {
+            profileCounts[profile.name]++;
+          }
+        });
+      }
+      
+      // Calculate weighted detection score
+      let detectionScore = 0;
+      let totalWeight = 0;
+      
+      settings.colorProfiles.forEach(profile => {
+        const profilePercentage = (profileCounts[profile.name] / totalAnalyzedPixels) * 100;
+        detectionScore += profilePercentage * profile.weight;
+        totalWeight += Math.abs(profile.weight);
+      });
+      
+      // Normalize detection score
+      const normalizedScore = totalWeight > 0 ? (detectionScore / totalWeight) : 0;
+      
+      // Apply sensitivity threshold
+      const adjustedThreshold = 5 * (settings.sensitivity / 50);
+      
+      // Incorporate temporal change if previous data exists
+      let finalConfidence = Math.max(0, normalizedScore);
+      let temporalChangeDetected = false;
+      
+      if (this.previousDetectionData) {
+        const previousConfidence = this.previousDetectionData.confidence;
+        const confidenceChange = Math.abs(finalConfidence - previousConfidence);
+        
+        if (confidenceChange > settings.temporalSensitivity * 10) {
+          temporalChangeDetected = true;
+          // Increase confidence when significant changes are detected
+          finalConfidence += confidenceChange * settings.temporalSensitivity;
         }
       }
       
-      // Calculate how much of the image contains potential melting indicators
-      const totalSampledPixels = pixels.length / 40;
-      const meltingPercentage = (meltingPixelsCount / totalSampledPixels) * 100;
+      // Determine if melting is detected
+      const isMelting = finalConfidence > adjustedThreshold || temporalChangeDetected;
       
-      // Detection threshold - adjust based on your requirements
-      const isMelting = meltingPercentage > 5; // 5% threshold as an example
+      // Prepare detection data
+      const detectionData = {
+        profileCounts,
+        totalAnalyzed: totalAnalyzedPixels,
+        normalizedScore,
+        temporalChangeDetected,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        timestamp: new Date().getTime()
+      };
+      
+      // Store detection data for temporal analysis
+      this.previousDetectionData = {
+        detected: isMelting,
+        confidence: finalConfidence,
+        detectionData
+      };
       
       return {
         detected: isMelting,
-        confidence: meltingPercentage,
-        detectionData: {
-          meltingPixels: meltingPixelsCount,
-          totalSampled: totalSampledPixels,
-          percentage: meltingPercentage
-        }
+        confidence: finalConfidence,
+        detectionData
       };
     } catch (error) {
       console.error('Error in melt detection:', error);
@@ -77,6 +246,9 @@ export class MeltDetectionService {
     }
   }
   
+  /**
+   * Initializes the detection service
+   */
   static async initialize() {
     if (this.isInitialized) return;
     
@@ -84,8 +256,7 @@ export class MeltDetectionService {
       if (!this.isModelLoading) {
         this.isModelLoading = true;
         
-        // We're no longer dependent on TensorFlow.js
-        console.log('Initializing melt detection service');
+        console.log('Initializing melt detection service with enhanced algorithms');
         
         this.isInitialized = true;
         this.isModelLoading = false;
@@ -95,5 +266,21 @@ export class MeltDetectionService {
       console.error('Failed to initialize MeltDetectionService:', error);
       throw error;
     }
+  }
+  
+  /**
+   * Updates detection settings for custom detection scenarios
+   * @param settings New detection settings
+   */
+  static updateSettings(settings: Partial<DetectionSettings>) {
+    this.defaultSettings = {
+      ...this.defaultSettings,
+      ...settings,
+      colorProfiles: settings.colorProfiles || this.defaultSettings.colorProfiles,
+      regionOfInterest: settings.regionOfInterest || this.defaultSettings.regionOfInterest
+    };
+    
+    // Reset previous detection data when settings change
+    this.previousDetectionData = null;
   }
 }
