@@ -1,6 +1,4 @@
 
-import * as tf from '@tensorflow/tfjs';
-
 interface MeltDetectionResult {
   detected: boolean;
   confidence: number;
@@ -16,13 +14,10 @@ export class MeltDetectionService {
   // This should be replaced with your actual melting detection algorithm
   static async detectMelting(imageElement: HTMLImageElement | HTMLVideoElement): Promise<MeltDetectionResult> {
     try {
-      // Initialize TF.js if not already done
+      // Initialize if not already done
       if (!this.isInitialized) {
         await this.initialize();
       }
-      
-      // For demonstration purposes - in reality, you would implement your 
-      // specific melting detection algorithm here
       
       // Create a canvas to analyze the image
       const canvas = document.createElement('canvas');
@@ -89,10 +84,9 @@ export class MeltDetectionService {
       if (!this.isModelLoading) {
         this.isModelLoading = true;
         
-        // Load TensorFlow.js
-        await tf.ready();
+        // We're no longer dependent on TensorFlow.js
+        console.log('Initializing melt detection service');
         
-        // You could load a custom model here if you have one for melt detection
         this.isInitialized = true;
         this.isModelLoading = false;
       }
